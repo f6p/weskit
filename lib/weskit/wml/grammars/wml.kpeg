@@ -1,0 +1,91 @@
+# Parser =======================================================================
+
+%% header {
+  module Weskit::WML::Parsers
+}
+
+%% name = KPEG
+
+%% {
+  attr_accessor :result
+
+  private
+
+  def strip_chars string, chars
+    string[chars, string.length - chars * 2]
+  end
+}
+
+%% footer {
+  end
+}
+
+# Rules ========================================================================
+
+id  = < /[a-z][0-9a-z_]*/i > { text }
+ids = ids:i1 - ',' - ids:i2 { i1 + i2 }
+    | id:i { [i] }
+
+item  = attribute | attributes | element
+items = items:i1 items:i2 { i1 + i2 }
+      | item:i { (i.is_a? Array) ? i : [i] }
+
+contents = items?:i { i.to_a }
+
+# Attributes -------------------------------------------------------------------
+
+single_attr    = - id:n - '=' - val:v  - eol
+                 { Weskit::WML::Attribute.new n, *v }
+multiple_attrs = - ids:n - '=' - vals:v - eol
+                 { n.reduce(Array.new) do |attrs, name|
+                   value =v.shift or [nil]
+                   attrs << Weskit::WML::Attribute.new(name, *value)
+                 end }
+
+attribute  = blk_lines single_attr:a blk_lines { a }
+attributes = blk_lines multiple_attrs:a blk_lines { a }
+
+# Attribute values -------------------------------------------------------------
+
+code        = < /<<.*?>>/m > { [strip_chars(text, 2), {:code => true}] }
+in_brackets = < /\(.*?\)/m > { [strip_chars(text, 1)] }
+in_quotes   = < /".*?"/m >   { [strip_chars(text, 1)] }
+raw         = < /.*/ >       { [text.strip] }
+
+escaped = in_quotes:s1 escaped:s2 { s1[0] += '"' + s2[0] ; s1 }
+        | in_quotes
+i18n    = '_' - (in_brackets | in_quotes):s { [s[0], {:translatable => true}] }
+
+val  = val:v1 - '+' sp_lf val:v2 { v1[0] += v2[0] ; v1 }
+     | escaped | i18n | code | in_brackets | in_quotes | raw
+vals = vals:v1 - ',' - vals:v2 { v1 + v2 }
+     | val:v { [v] }
+
+# Elements ---------------------------------------------------------------------
+
+amendment = - amending_tag:n - eol contents:c - closing_tag(n) - eol
+            { Weskit::WML::Element.new(n, :amendment => true).push *c }
+regular   = - opening_tag:n  - eol contents:c - closing_tag(n) - eol
+            { Weskit::WML::Element.new(n).push *c }
+
+element = blk_lines (amendment | regular):e blk_lines { e }
+
+# Tags -------------------------------------------------------------------------
+
+amending_tag   = '[+' id:n ']'  { n }
+closing_tag(m) = '[/' id:n ']' &{ n == m }
+opening_tag    = '['  id:n ']'  { n }
+
+# Whitespace -------------------------------------------------------------------
+
+eof = !.
+eol = "\r\n" | "\n"
+sp  = " " | "\t"
+
+-         = sp*
+sp_lf     = (sp | eol)*
+blk_lines = (- eol)*
+
+# Root -------------------------------------------------------------------------
+
+root = contents:c { c.empty? ? nil : Weskit::WML::Root.new.push(*c) }

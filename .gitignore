@@ -1,0 +1,7 @@
+.bundle
+.rbx
+.redcar
+.yardoc
+*.gem
+*.lock
+pkg
